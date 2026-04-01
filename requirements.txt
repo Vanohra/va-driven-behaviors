@@ -1,0 +1,32 @@
+# VA Driven Behaviors — Python Dependencies
+#
+# Install with:  pip install -r requirements.txt
+#
+# Notes:
+#   - PyBullet and gym are NOT listed here (simulation excluded).
+#   - sounddevice is optional for online mode; without it the pipeline
+#     runs in video-only mode (microphone capture disabled).
+#   - torch version depends on your hardware; see pytorch.org for the
+#     correct CUDA/CPU install command.
+
+# ── Core numerical / ML ──────────────────────────────────────────────────────
+numpy>=1.21
+scipy>=1.7           # Theil-Sen estimator in trend analysis
+
+# ── PyTorch (emotion model inference) ────────────────────────────────────────
+# CPU version (safe default):
+torch>=1.12
+# For GPU, replace with the appropriate CUDA build from https://pytorch.org
+
+# ── Video / audio I/O ────────────────────────────────────────────────────────
+opencv-python>=4.5   # Video capture and reading (cv2)
+
+# ── Online mode: microphone capture (optional) ───────────────────────────────
+sounddevice>=0.4     # Microphone recording (omit if not using online mode)
+scipy>=1.7           # scipy.io.wavfile for saving audio (already listed above)
+
+# ── The emotion-poc external repository (test_emotions.py) ──────────────────
+# This is NOT a pip package.  It is a local repository whose path is
+# configured in setup_paths.py.  The dependencies of that repo include:
+#   torch, torchvision, opencv-python, librosa, numpy
+# (Check the emotion-poc repository's own requirements for the full list.)
