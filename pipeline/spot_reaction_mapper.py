@@ -48,6 +48,11 @@ class SpotReactionMapper:
         self.confidence_threshold = confidence_threshold
         self.volatility_high = volatility_high
         self.volatility_med = volatility_med
+        
+        # Momentum Tracking (Change-Ratio)
+        self.last_valence: Optional[float] = None
+        self.last_arousal: Optional[float] = None
+        self.change_threshold = 15.0  # 15% as confirmed by user
     
     def map_to_action(self, 
                      va_label: str,
@@ -55,7 +60,9 @@ class SpotReactionMapper:
                      volatility: float,
                      confidence: float,
                      valence: float,
-                     arousal: float) -> Tuple[ReactionAction, str]:
+                     arousal: float,
+                     last_v: Optional[float] = None,
+                     last_a: Optional[float] = None) -> Tuple[ReactionAction, str]:
         """
         Map emotion analysis to structured ReactionAction.
         
@@ -70,7 +77,21 @@ class SpotReactionMapper:
         Returns:
             Tuple of (ReactionAction, explain_string)
         """
-        # Determine volatility level
+        # Step 0: Calculate Momentum (Change-Ratio) - Professor's Algorithm
+        def calc_ratio(curr, last):
+            if last is None or abs(last) < 0.01: return 0.0
+            return ((curr - last) / abs(last)) * 100.0
+            
+        eff_last_v = last_v if last_v is not None else self.last_valence
+        eff_last_a = last_a if last_a is not None else self.last_arousal
+
+        v_shift = calc_ratio(valence, eff_last_v)
+        a_shift = calc_ratio(arousal, eff_last_a)
+        
+        # Store for next window (internal memory)
+        self.last_valence = valence
+        self.last_arousal = arousal
+        
         is_high_vol = volatility >= self.volatility_high
         is_med_vol = volatility >= self.volatility_med and not is_high_vol
         
@@ -131,7 +152,14 @@ class SpotReactionMapper:
                 pose_mode = "VA_POSE" if use_va_pose else "REACTION_POSE"
                 pose_name = "ENGAGE" if not use_va_pose else "VA_POSE"
                 duration_s = 1.5  # Contract: 1.2-1.8s, use middle
-                explain = f"Positive-high-arousal state: engaging (V={valence:.2f}, A={arousal:.2f})"
+                
+                # Dynamically adjust based on momentum
+                if v_shift > self.change_threshold:
+                    speed_mult += 0.1  # More assertive if getting happier
+                    duration_s += 0.3
+                    explain = f"Positive-high-arousal state [Sudden Up-Trend {v_shift:.1f}%]: engaging assertively (V={valence:.2f}, A={arousal:.2f})"
+                else:
+                    explain = f"Positive-high-arousal state: engaging (V={valence:.2f}, A={arousal:.2f})"
             
             # Neutral -> NEUTRAL
             elif va_lower == 'neutral' or ('neutral' in va_lower and 'valence' in va_lower and 'arousal' in va_lower):

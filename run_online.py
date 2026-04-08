@@ -58,18 +58,20 @@ def parse_args() -> argparse.Namespace:
                    help="Webcam capture frame rate  (default: 15)")
     p.add_argument("--duration", type=float, default=30.0, metavar="S",
                    help="Total session duration in seconds  (default: 30)")
-    p.add_argument("--window",   type=float, default=10.0, metavar="S",
-                   help="Analysis window size in seconds  (default: 10)")
+    p.add_argument("--window",   type=float, default=3.0, metavar="S",
+                   help="Analysis window size in seconds  (default: 3)")
     p.add_argument("--min-confidence", type=float, default=0.55, metavar="C",
                    help="Minimum state_confidence to accept a new intent  (default: 0.55)")
-    p.add_argument("--cooldown", type=float, default=8.0, metavar="S",
-                   help="Min seconds between behavior changes  (default: 8)")
+    p.add_argument("--cooldown", type=float, default=1.5, metavar="S",
+                   help="Min seconds between behavior changes  (default: 1.5)")
     p.add_argument("--model",    default=None, metavar="PATH",
                    help="Path to .pt model file  (default: models/jointcam_finetuned_v4.pt)")
     p.add_argument("--device",   default="cpu", choices=["cpu", "cuda"],
                    help="Torch device  (default: cpu)")
     p.add_argument("--no-cleanup", action="store_true",
                    help="Keep temp video/audio files after the session")
+    p.add_argument("--sparse", action="store_true",
+                   help="Sparse sampling mode: process only 2 frames per window (CPU-efficient)")
     return p.parse_args()
 
 
@@ -134,6 +136,8 @@ def main() -> None:
     )
 
     # ── Run streaming session ─────────────────────────────────────────────────
+    num_samples = 2 if args.sparse else None
+    
     try:
         session = StreamingSession(
             window_analyzer=analyzer,
@@ -147,6 +151,7 @@ def main() -> None:
             cooldown_s=args.cooldown,
             debug=args.debug,
             cleanup_temp=not args.no_cleanup,
+            num_samples=num_samples,
         )
         session.run()
 

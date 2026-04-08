@@ -26,9 +26,13 @@ from pathlib import Path
 # Set environment variable to force Python unbuffered mode
 os.environ['PYTHONUNBUFFERED'] = '1'
 
-# Add the user's emotion-poc directory to path so we can import their modules
-EMOTION_REPO_PATH = r"C:\Users\vanoh\OneDrive\Desktop\ChaiCenter_SpotBasics\chaicenter-spot-basics\emotion-poc"
-sys.path.append(EMOTION_REPO_PATH)
+# Calculate absolute path to project root dynamically
+_current_file = os.path.abspath(__file__)
+# Go up: simulation/ -> legacy_check/ -> root
+EMOTION_REPO_PATH = os.path.dirname(os.path.dirname(os.path.dirname(_current_file)))
+
+if EMOTION_REPO_PATH not in sys.path:
+    sys.path.append(EMOTION_REPO_PATH)
 
 try:
     from test_emotions import (
@@ -47,18 +51,21 @@ except ImportError as e:
 # Calculate absolute path to spotmicro directory
 _current_file = os.path.abspath(__file__)
 # From: spot_mini_mini/spot_bullet/src/emotion/integration/emotional_controller.py
-# Go up: integration/ -> emotion/ -> src/ -> spot_bullet/ -> spot_mini_mini/
-_emotion_dir = os.path.dirname(os.path.dirname(_current_file))  # emotion/
-_spot_bullet_src_dir = os.path.dirname(_emotion_dir)  # src/
-_spot_bullet_dir = os.path.dirname(_spot_bullet_src_dir)  # spot_bullet/
-_spot_mini_dir = os.path.dirname(_spot_bullet_dir)  # spot_mini_mini/
-_spotmicro_path = os.path.join(_spot_mini_dir, 'spotmicro')
-# Also add spot_mini_mini to path so imports work
-if _spot_mini_dir not in sys.path:
-    sys.path.insert(0, _spot_mini_dir)
+# Add spotmicro to path for new simulation
+# Calculate absolute path to spotmicro directory
+# From: legacy_check/simulation/emotional_controller.py
+_current_file = os.path.abspath(__file__)
+# Go up: simulation/ -> legacy_check/ -> root
+_legacy_dir = os.path.dirname(_current_file)
+_root_dir = os.path.dirname(os.path.dirname(_legacy_dir))
+
+# The simulation expects a specific structure if running in the full spot_mini_mini repo
+_spotmicro_path = os.path.join(_root_dir, 'spotmicro')
+
+if _root_dir not in sys.path:
+    sys.path.insert(0, _root_dir)
 if _spotmicro_path not in sys.path:
     sys.path.insert(0, _spotmicro_path)
-
 from spotmicro.GymEnvs.spot_bezier_env import spotBezierEnv
 
 # Import emotion pipeline components

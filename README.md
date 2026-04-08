@@ -35,7 +35,7 @@ VA driven behaviors/
 ### 3. Run offline (pre-recorded video)
 
 ```bash
-python run_offline.py path/to/video.mp4
+python run_offline.py path/to/video.mp4 --windowed --sparse
 ```
 
 ### 4. Run online (live webcam + mic, streaming mode)
@@ -44,7 +44,38 @@ python run_offline.py path/to/video.mp4
 python run_online.py
 ```
 
-That's it. No path configuration required.
+### 5. Running on Google Colab (GPU)
+
+For the fastest and most accurate results (analysis in < 5s), use the included:
+**`Colab_Diagnostic_Tool.ipynb`**
+
+1. Upload the project zip and model to Colab.
+2. Open the notebook and set Runtime to **GPU**.
+3. Run the setup and analysis cells.
+
+---
+
+### 6. Technical Flag Dictionary (Concise)
+
+- `--windowed`: Enables the **3.0s behavior loop** (Professor's recommendation).
+- `--sparse`: **CPU Optimization**. Analyzes only 2 frames per window. Use for rapid local testing.
+- `--device cuda`: **GPU Acceleration**. Use on Colab to analyze all 90 frames for maximum accuracy.
+
+---
+
+## 🚀 Performance Tiers (CPU vs. GPU)
+
+The pipeline is designed to be hardware-flexible:
+1.  **CPU Tier ("Rapid Verify")**: Uses `--sparse` to provide instant feedback. The CPU is **NOT** a bottleneck; it is a high-speed diagnostic tool for logic verification.
+2.  **GPU Tier ("High Fidelity")**: Analyzes 100% of the video data. Use this for the final SIGDIAL data generation and momentum validation.
+
+---
+
+## ⚠️ Known Issue: Audio Extraction
+
+We are currently experiencing consistent "Warning: Could not extract audio" errors in both Windows and Linux (Colab) environments. 
+- **Current Status**: The system uses a "Modality-Robust" fallback (zeros) and continues the analysis using visual data.
+- **Note for Teammate**: Please investigate the `librosa` / `ffmpeg` pathing or consider a `moviepy` wrapper if high-fidelity audio features are required for the final submission.
 
 ---
 
@@ -276,21 +307,11 @@ t=10: A timer fires. Loop B wakes up, takes a snapshot (a frozen copy) of the cu
 
 t=10 to t=20: Loop A continues filling the live buffer with new frames. Loop B's worker thread is analyzing the t=0–10 snapshot in parallel.
 
-t=20: Timer fires again. Loop B takes another snapshot (now t=10–20 content) and hands it to a new worker. The previous analysis (t=0–10) may or may not be done — that's fine, workers are independent.
 
-### The Key Insight: Snapshot vs. Live Buffer
-
-The snapshot is critical. When Loop B fires, it doesn't analyze the live buffer directly (that would cause race conditions as Loop A keeps writing). It copies the current state of the buffer into a separate, frozen chunk — then analysis runs on that frozen chunk at whatever speed it needs, while the live buffer moves on
-
-
-![alt text](image.png)
-
-### output 
-
-PS C:\Users\vanoh\OneDrive\Desktop\VA driven behaviors> python run_online.py
+PS [PROJECT_ROOT]> python run_online.py
 Warning: Missing 'std' for 'valence' in calibration file. Using fallback thresholds.
 Warning: Using fallback calibration thresholds.
-Loading model: jointcam_finetuned_v4.pt ... Loading model from: C:\Users\vanoh\OneDrive\Desktop\VA driven behaviors\models\jointcam_finetuned_v4.pt
+Loading model: jointcam_finetuned_v4.pt ... Loading model from: [PROJECT_ROOT]\models\jointcam_finetuned_v4.pt
   Loaded 77/85 parameters
 done.
 
@@ -322,7 +343,7 @@ Camera opened: 640×360 @ 30.0 fps  (requested 320×240 @ 15.0)
   WINDOW 1/3  |  t≈10s  |  18:22:11  |  225 frames in buffer
 ──────────────────────────────────────────────────────────────────
   [Window 1] Running VA analysis pipeline...
-  Extracting video features from: C:\Users\vanoh\AppData\Local\Temp\va_stream_0.avi
+  Extracting video features from: [TEMP_DIR]\va_stream_0.avi
     Video: 225 frames, 15.0 FPS, 15.00s duration
 
 ──────────────────────────────────────────────────────────────────
@@ -330,7 +351,7 @@ Camera opened: 640×360 @ 30.0 fps  (requested 320×240 @ 15.0)
   [WARNING] Worker overflow: previous analysis still running when this snapshot fired.  Consider increasing --window.
 ──────────────────────────────────────────────────────────────────
   [Window 2] Running VA analysis pipeline...
-  Extracting video features from: C:\Users\vanoh\AppData\Local\Temp\va_stream_1.avi
+  Extracting video features from: [TEMP_DIR]\va_stream_1.avi
     Video: 225 frames, 15.0 FPS, 15.00s duration
 
 ──────────────────────────────────────────────────────────────────
@@ -338,7 +359,7 @@ Camera opened: 640×360 @ 30.0 fps  (requested 320×240 @ 15.0)
   [WARNING] Worker overflow: previous analysis still running when this snapshot fired.  Consider increasing --window.
 ──────────────────────────────────────────────────────────────────
     Extracted 225 frame features, shape: (225, 512)
-  Extracting audio features from: C:\Users\vanoh\AppData\Local\Temp\va_stream_0.wav
+  Extracting audio features from: [TEMP_DIR]\va_stream_0.wav
     Audio: 9.44s duration, 16000 Hz sample rate
     Extracted 300 audio frames, shape: (300, 128)
 
@@ -363,10 +384,10 @@ Camera opened: 640×360 @ 30.0 fps  (requested 320×240 @ 15.0)
 
   ★  BEHAVIOR UPDATE:  —  →  ENGAGE  (first window)
   [Window 3] Running VA analysis pipeline...
-  Extracting video features from: C:\Users\vanoh\AppData\Local\Temp\va_stream_2.avi
+  Extracting video features from: [TEMP_DIR]\va_stream_2.avi
     Video: 225 frames, 15.0 FPS, 15.00s duration
     Extracted 225 frame features, shape: (225, 512)
-  Extracting audio features from: C:\Users\vanoh\AppData\Local\Temp\va_stream_1.wav
+  Extracting audio features from: [TEMP_DIR]\va_stream_1.wav
     Audio: 14.98s duration, 16000 Hz sample rate
     Extracted 300 audio frames, shape: (300, 128)
 

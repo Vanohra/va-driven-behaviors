@@ -152,15 +152,16 @@ class StreamingSession:
         fps:                  float = 15.0,
         resolution:           Tuple = (320, 240),
         session_duration_s:   float = 30.0,
-        window_duration_s:    float = 10.0,
+        window_duration_s:    float = 3.0,
         capture_audio:        bool  = True,
         sample_rate:          int   = 16000,
         min_confidence:       float = 0.55,
-        cooldown_s:           float = 8.0,
+        cooldown_s:           float = 1.5,
         debug:                bool  = False,
         cleanup_temp:         bool  = True,
         temp_dir: Optional[str]     = None,
         on_behavior_update          = None,
+        num_samples: Optional[int]  = None,
     ):
         """
         on_behavior_update: optional callable invoked immediately when each
@@ -180,8 +181,10 @@ class StreamingSession:
         self.sample_rate         = sample_rate
         self.debug               = debug
         self.cleanup_temp        = cleanup_temp
-        self.temp_dir            = temp_dir or tempfile.gettempdir()
-        self.on_behavior_update  = on_behavior_update
+        self.temp_dir             = temp_dir or tempfile.gettempdir()
+        self.on_behavior_update   = on_behavior_update
+        self.num_samples          = num_samples
+        self.cooldown_s           = cooldown_s
 
         self.n_windows = max(1, int(session_duration_s / window_duration_s))
 
@@ -426,6 +429,7 @@ class StreamingSession:
             analysis = self.analyzer.analyze_window(
                 video_path=video_path,
                 audio_path=audio_path,
+                num_samples=self.num_samples,
             )
         except Exception as e:
             with self._print_lock:

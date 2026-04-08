@@ -26,6 +26,10 @@ Usage:
 import sys
 import os
 import argparse
+import tempfile
+import shutil
+import cv2
+import numpy as np
 from pathlib import Path
 
 # ── Pipeline imports ──────────────────────────────────────────────────────────
@@ -66,6 +70,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--audio", default=None, metavar="PATH",
         help="Separate audio file  (default: extracted from video)"
+    )
+    p.add_argument(
+        "--sparse", action="store_true",
+        help="Sparse sampling mode: process only 2 frames (CPU-efficient)"
+    )
+    p.add_argument(
+        "--windowed", action="store_true",
+        help="Run analysis in 3s windows to evaluate momentum logic"
     )
     return p.parse_args()
 
@@ -130,6 +142,79 @@ def print_result(result: dict) -> None:
     print()
 
 
+def run_windowed_session(video_path: Path, 
+                         analyzer: WindowAnalyzer, 
+                         sparse: bool) -> None:
+    """Analyze a video in sequence of 3.0s windows (Standard for SIGDIAL)."""
+    step_s = 3.0
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        print(f"Error opening video: {video_path}")
+        return
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = total_frames / fps
+    
+    print(f"  Windowed Mode: {step_s}s steps | Total duration: {duration:.1f}s")
+    
+    last_v, last_a = None, None
+    window_count = 0
+    
+    # Process the video in chunks
+    tmp_dir = Path(tempfile.mkdtemp(prefix="va_offline_"))
+    try:
+        start_time = 0.0
+        while start_time < duration:
+            end_time = min(start_time + step_s, duration)
+            if (end_time - start_time) < 1.0: break # Skip final tiny fragment
+            
+            window_count += 1
+            print(f"\n--- Window {window_count} [{start_time:.1f}s - {end_time:.1f}s] ---")
+            
+            # Extract segment to temp file
+            seg_path = tmp_dir / f"win_{window_count}.mp4"
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(str(seg_path), fourcc, fps, 
+                                  (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), 
+                                   int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+            
+            cap.set(cv2.CAP_PROP_POS_MSEC, start_time * 1000)
+            target_frames = int((end_time - start_time) * fps)
+            for _ in range(target_frames):
+                ret, frame = cap.read()
+                if not ret: break
+                out.write(frame)
+            out.release()
+            
+            # Analyze this specific segment
+            num_samples = 2 if sparse else None
+            result = analyzer.analyze_window(
+                video_path=str(seg_path),
+                num_samples=num_samples,
+                last_v=last_v,
+                last_a=last_a
+            )
+            
+            if result:
+                print_result(result)
+                # Chain the state for the next window's momentum
+                last_v = result.get("valence")
+                last_a = result.get("arousal")
+            else:
+                print("  Analysis failed for this window.")
+            
+            start_time += step_s
+            
+    finally:
+        cap.release()
+        try:
+            shutil.rmtree(tmp_dir)
+        except Exception:
+            # On Windows, temp folders can sometimes be locked temporarily
+            print(f"\nNote: Temp directory {tmp_dir} remains. You may delete it manually.")
+
+
 def main() -> None:
     args = parse_args()
     root = Path(__file__).parent
@@ -178,17 +263,23 @@ def main() -> None:
         debug=args.debug,
     )
 
-    print("Running VA analysis...", flush=True)
-    result = analyzer.analyze_window(
-        video_path=str(video_path),
-        audio_path=args.audio,
-    )
+    if args.windowed:
+        run_windowed_session(video_path, analyzer, args.sparse)
+    else:
+        print("Running VA analysis...", flush=True)
+        num_samples = 2 if args.sparse else None
+        
+        result = analyzer.analyze_window(
+            video_path=str(video_path),
+            audio_path=args.audio,
+            num_samples=num_samples
+        )
 
-    if result is None:
-        print("\nERROR: Analysis failed. Run with --debug for details.")
-        sys.exit(1)
+        if result is None:
+            print("\nERROR: Analysis failed. Run with --debug for details.")
+            sys.exit(1)
 
-    print_result(result)
+        print_result(result)
 
 
 if __name__ == "__main__":

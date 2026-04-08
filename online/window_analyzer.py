@@ -55,6 +55,9 @@ class WindowAnalyzer:
         self,
         video_path: str,
         audio_path: Optional[str] = None,
+        num_samples: Optional[int] = None,
+        last_v:      Optional[float] = None,
+        last_a:      Optional[float] = None,
     ) -> Optional[Dict]:
         """
         Run the full pipeline on one video clip.
@@ -92,7 +95,9 @@ class WindowAnalyzer:
         try:
             if self.debug:
                 print(f"  [analyzer] video features: {video_path}")
-            video_features, fps = extract_video_features(video_path, self.device)
+            video_features, fps = extract_video_features(
+                video_path, self.device, num_samples=num_samples
+            )
             audio_features       = extract_audio_features(audio_path)
         except Exception as e:
             print(f"[WindowAnalyzer] Feature extraction failed: {e}")
@@ -127,7 +132,7 @@ class WindowAnalyzer:
                 import traceback; traceback.print_exc()
             return None
 
-        if len(valence_series) < 5:
+        if len(valence_series) < 2:
             print(f"[WindowAnalyzer] Only {len(valence_series)} frames — skipping.")
             return None
 
@@ -169,6 +174,8 @@ class WindowAnalyzer:
                 confidence=analysis.get("state_confidence", 0.5),
                 valence=analysis.get("valence", 0.0),
                 arousal=analysis.get("arousal", 0.0),
+                last_v=last_v,
+                last_a=last_a,
             )
         except Exception as e:
             print(f"[WindowAnalyzer] Reaction mapping failed: {e}")

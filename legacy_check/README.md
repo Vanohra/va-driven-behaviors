@@ -53,7 +53,7 @@ Before running it, add the project root to your Python path and update the
 hardcoded paths inside the script:
 
 ```bash
-cd "C:\Users\vanoh\OneDrive\Desktop\VA driven behaviors"
+cd "[PROJECT_ROOT]"
 python legacy_check/tools/run_batch_videos.py
 ```
 

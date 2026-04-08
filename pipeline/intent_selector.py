@@ -11,7 +11,7 @@ Implements the 5-intent emotion policy logic that selects one of:
 This module does NOT modify the VA pipeline - it only uses the outputs.
 """
 
-from typing import Dict, Tuple, Literal
+from typing import Dict, Tuple, Literal, Optional
 from enum import Enum
 
 
@@ -49,26 +49,45 @@ class IntentSelector:
         self.volatility_high_threshold = volatility_high_threshold
         self.volatility_med_threshold = volatility_med_threshold
         self.confidence_threshold = confidence_threshold
+        
+        # Stateful memory for Change-Ratio (Momentum)
+        self.last_valence: Optional[float] = None
+        self.last_arousal: Optional[float] = None
+        self.change_threshold = 15.0  # Percentage change required for a "Significant Shift"
     
+    def calculate_change_ratio(self, current: float, last: Optional[float]) -> float:
+        """Calculate the percentage change between current and previous value."""
+        if last is None or abs(last) < 0.01:  # Avoid division by zero or tiny numbers
+            return 0.0
+        return ((current - last) / abs(last)) * 100.0
+
     def select_intent(self,
                      valence: float,
                      arousal: float,
                      volatility: float,
                      confidence: float,
-                     va_label: str) -> Tuple[Intent, Literal["REACTION_POSE", "VA_POSE"], str]:
+                     va_label: str) -> Tuple[Intent, Literal["REACTION_POSE", "VA_POSE"], str, bool]:
         """
         Select intent and pose mode from VA pipeline outputs.
         
-        Args:
-            valence: Valence value from VA pipeline
-            arousal: Arousal value from VA pipeline
-            volatility: Volatility value from VA pipeline
-            confidence: Confidence value from VA pipeline
-            va_label: VA state label (e.g., 'negative-high-arousal', 'neutral', etc.)
-        
         Returns:
-            Tuple of (intent, pose_mode, explanation)
+            Tuple of (intent, pose_mode, explanation, is_significant_shift)
         """
+        # Step 0: Calculate Momentum (Change-Ratio)
+        v_shift = self.calculate_change_ratio(valence, self.last_valence)
+        a_shift = self.calculate_change_ratio(arousal, self.last_arousal)
+        
+        is_significant_shift = (abs(v_shift) >= self.change_threshold or 
+                                abs(a_shift) >= self.change_threshold)
+        
+        # Store for next window
+        self.last_valence = valence
+        self.last_arousal = arousal
+
+        momentum_info = ""
+        if is_significant_shift:
+            momentum_info = f" [Momentum: V_shift={v_shift:+.1f}%, A_shift={a_shift:+.1f}%]"
+        
         # Step 1: Check volatility
         is_high_vol = volatility >= self.volatility_high_threshold
         is_med_vol = volatility >= self.volatility_med_threshold and not is_high_vol
@@ -139,7 +158,10 @@ class IntentSelector:
             pose_mode = "REACTION_POSE"
             explain += f" (using REACTION_POSE)"
         
-        return intent, pose_mode, explain
+        if is_significant_shift:
+            explain += momentum_info
+            
+        return intent, pose_mode, explain, is_significant_shift
     
     def get_pose_name(self, intent: Intent, pose_mode: Literal["REACTION_POSE", "VA_POSE"]) -> str:
         """

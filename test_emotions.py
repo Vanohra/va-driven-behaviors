@@ -256,16 +256,17 @@ class JointCAM(nn.Module):
 # Feature Extraction Functions
 # ============================================================================
 
-def extract_video_features(video_path, device='cpu', target_fps=25, max_frames=300, per_frame=False):
+def extract_video_features(video_path, device='cpu', target_fps=25, max_frames=300, per_frame=False, num_samples=None):
     """
     Extract visual features from video using ResNet50.
     
     Args:
         video_path: Path to video file
         device: 'cpu' or 'cuda'
-        target_fps: Target frames per second (ignored if per_frame=True)
-        max_frames: Maximum number of frames to process (ignored if per_frame=True)
+        target_fps: Target frames per second (ignored if per_frame=True or num_samples is set)
+        max_frames: Maximum number of frames to process
         per_frame: If True, extract features on every decoded frame (no downsampling)
+        num_samples: If set, pick exactly this many frames evenly spread (for CPU sparse mode)
         
     Returns:
         features: numpy array of shape (num_frames, 512)
@@ -301,8 +302,17 @@ def extract_video_features(video_path, device='cpu', target_fps=25, max_frames=3
     
     features_list = []
     frame_indices_list = []
-    frame_idx = 0
     
+    # Pre-calculate sampling if num_samples is set
+    target_indices = None
+    if num_samples is not None and not per_frame:
+        if num_samples >= total_frames:
+            target_indices = set(range(total_frames))
+        else:
+            target_indices = set(np.linspace(0, total_frames - 1, num_samples, dtype=int))
+        print(f"    Sparse sampling: picking {len(target_indices)} specific frames across duration")
+
+    frame_idx = 0
     if per_frame:
         # Extract features on every frame (no downsampling)
         print(f"    Extracting features on every frame (per_frame=True)")
@@ -337,7 +347,14 @@ def extract_video_features(video_path, device='cpu', target_fps=25, max_frames=3
                 if not ret:
                     break
                     
-                if frame_idx % frame_skip == 0:
+                # Decide if we skip this frame
+                should_process = False
+                if target_indices is not None:
+                    should_process = (frame_idx in target_indices)
+                else:
+                    should_process = (frame_idx % frame_skip == 0)
+
+                if should_process:
                     # Convert BGR to RGB
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
@@ -354,10 +371,10 @@ def extract_video_features(video_path, device='cpu', target_fps=25, max_frames=3
                     features_list.append(feature)
                     frame_indices_list.append(frame_idx)
                     
-                    if len(features_list) >= max_frames:
-                        break
-                        
                 frame_idx += 1
+                if target_indices is None and len(features_list) >= max_frames:
+                    print(f"    Reached max_frames ({max_frames}) \u2014 stopping.")
+                    break
     
     cap.release()
     
@@ -503,51 +520,21 @@ def load_model(model_path, device='cpu', use_audio_embedding=False):
     
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
-    # Print checkpoint info
-    if 'best_Val_accV' in checkpoint:
-        print(f"  Best validation - Valence CCC: {checkpoint['best_Val_accV']:.4f}")
-    if 'best_Val_accA' in checkpoint:
-        print(f"  Best validation - Arousal CCC: {checkpoint['best_Val_accA']:.4f}")
-    
     # Create model with audio embedding if requested
     model = JointCAM(use_audio_embedding=use_audio_embedding)
     
-    # Load state dict
-    state_dict = checkpoint['net']
-    
     # Map checkpoint keys to model keys
-    # The checkpoint has slightly different naming, so we map them
-    new_state_dict = {}
-    for key, value in state_dict.items():
-        # Handle the nested coattn structure
-        if key.startswith('coattn.'):
-            new_key = key.replace('coattn.', 'coattn.dcn_layers.0.')
-            # Note: We have simplified coattn, only load what we can
-            if 'linears' in key:
-                # Map linears.0.0 -> linears.0.0, etc.
-                pass
-        else:
-            new_key = key
-        new_state_dict[key] = value
-    
-    # Try to load matching parameters
+    state_dict = checkpoint['net']
     model_state = model.state_dict()
     loaded_count = 0
-    skipped_keys = []
     
     for key in model_state.keys():
         if key in state_dict and model_state[key].shape == state_dict[key].shape:
             model_state[key] = state_dict[key]
             loaded_count += 1
-        elif key.startswith('audio_embedding'):
-            # Audio embedding might not be in checkpoint - that's okay, it will be randomly initialized
-            skipped_keys.append(key)
     
     model.load_state_dict(model_state, strict=False)
     print(f"  Loaded {loaded_count}/{len(model_state)} parameters")
-    if skipped_keys and use_audio_embedding:
-        print(f"  Warning: Audio embedding weights not found in checkpoint, using random initialization")
-        print(f"    Skipped keys: {', '.join(skipped_keys)}")
     
     model.to(device)
     model.eval()
@@ -562,8 +549,8 @@ def predict_emotions(model, video_features, audio_features, device='cpu',
     
     Args:
         model: JointCAM model
-        video_features: (seq_len, 512) or (seq_len, 128) for audio if using embedding
-        audio_features: (seq_len, 1024) or (seq_len, 128) if using embedding
+        video_features: (seq_len, 512)
+        audio_features: (seq_len, 1024)
         device: 'cpu' or 'cuda'
         window_size: Size of sliding window (default: 300)
         stride: Stride for sliding window (default: 150)
@@ -605,7 +592,7 @@ def predict_emotions(model, video_features, audio_features, device='cpu',
         video_window = video_features[start_idx:end_idx]
         audio_window = audio_features[start_idx:end_idx]
         
-        # Pad if necessary (shouldn't happen at end, but just in case)
+        # Pad if necessary
         if len(video_window) < window_size:
             pad_len = window_size - len(video_window)
             video_window = np.pad(video_window, ((0, pad_len), (0, 0)), mode='edge')
@@ -658,212 +645,83 @@ def interpret_emotions(valence, arousal):
         primary_emotion: Primary emotion label
         description: Description of the emotional state
     """
-    # Emotion quadrant mapping (Russell's Circumplex Model)
     # High Arousal, High Valence: Excited, Happy
     # High Arousal, Low Valence: Angry, Afraid
     # Low Arousal, High Valence: Calm, Relaxed
     # Low Arousal, Low Valence: Sad, Depressed
     
     if valence >= 0 and arousal >= 0:
-        if valence > 0.5 and arousal > 0.5:
-            emotion = "Excited/Elated"
-        elif valence > 0.3:
-            emotion = "Happy"
+        if valence > arousal:
+            return "Happy", "Positive state with moderate arousal"
         else:
-            emotion = "Alert"
+            return "Excited", "High positive arousal"
     elif valence < 0 and arousal >= 0:
-        if valence < -0.5 and arousal > 0.5:
-            emotion = "Angry/Afraid"
-        elif arousal > 0.3:
-            emotion = "Tense"
+        if abs(valence) > arousal:
+            return "Angry", "Negative state with high arousal"
         else:
-            emotion = "Annoyed"
+            return "Afraid", "Anxious or fearful high arousal"
     elif valence >= 0 and arousal < 0:
-        if valence > 0.5 and arousal < -0.5:
-            emotion = "Calm/Relaxed"
-        elif valence > 0.3:
-            emotion = "Content"
+        if valence > abs(arousal):
+            return "Calm", "Positive state with low arousal"
         else:
-            emotion = "Serene"
+            return "Relaxed", "Deep relaxation or peacefulness"
     else:  # valence < 0 and arousal < 0
-        if valence < -0.5 and arousal < -0.5:
-            emotion = "Sad/Depressed"
-        elif valence < -0.3:
-            emotion = "Melancholy"
+        if abs(valence) > abs(arousal):
+            return "Sad", "Negative state with low arousal"
         else:
-            emotion = "Bored"
-    
-    description = f"Valence: {valence:.3f} ({'positive' if valence >= 0 else 'negative'}), "
-    description += f"Arousal: {arousal:.3f} ({'high' if arousal >= 0 else 'low'})"
-    
-    return emotion, description
+            return "Depressed", "Very low arousal negative state"
 
 
 # ============================================================================
-# RAVDESS / CREMA-D Label Parsing
-# ============================================================================
-
-def parse_ravdess_filename(filename):
-    """Parse RAVDESS filename to get ground truth emotion."""
-    # Format: 01-01-02-01-01-01-01.mp4
-    # Modality-Vocal-Emotion-Intensity-Statement-Repetition-Actor
-    # Emotion: 01=neutral, 02=calm, 03=happy, 04=sad, 05=angry, 06=fearful, 07=disgust, 08=surprised
-    
-    parts = Path(filename).stem.split('-')
-    if len(parts) >= 3:
-        emotion_code = int(parts[2])
-        emotions = {
-            1: "Neutral", 2: "Calm", 3: "Happy", 4: "Sad",
-            5: "Angry", 6: "Fearful", 7: "Disgust", 8: "Surprised"
-        }
-        return emotions.get(emotion_code, "Unknown")
-    return None
-
-
-def parse_cremad_filename(filename):
-    """Parse CREMA-D filename to get ground truth emotion."""
-    # Format: 1001_DFA_DIS_XX.mp4
-    # Actor_Sentence_Emotion_Level
-    # Emotions: ANG=angry, DIS=disgust, FEA=fear, HAP=happy, NEU=neutral, SAD=sad
-    
-    parts = Path(filename).stem.split('_')
-    if len(parts) >= 3:
-        emotion_code = parts[2][:3].upper()
-        emotions = {
-            "ANG": "Angry", "DIS": "Disgust", "FEA": "Fearful",
-            "HAP": "Happy", "NEU": "Neutral", "SAD": "Sad"
-        }
-        return emotions.get(emotion_code, "Unknown")
-    return None
-
-
-def get_ground_truth(video_path):
-    """Try to parse ground truth emotion from filename."""
-    filename = Path(video_path).name
-    
-    # Try RAVDESS format
-    if '-' in filename and filename.count('-') >= 6:
-        return parse_ravdess_filename(filename), "RAVDESS"
-    
-    # Try CREMA-D format
-    if '_' in filename:
-        return parse_cremad_filename(filename), "CREMA-D"
-    
-    return None, None
-
-
-# ============================================================================
-# Main Function
+# Main Loop (Testing)
 # ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Test emotions in videos using JointCAM model",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    python test_emotions.py video.mp4
-    python test_emotions.py video.mp4 --model_path custom_model.pt
-    python test_emotions.py video.mp4 --device cuda
-        """
-    )
-    parser.add_argument("video_path", help="Path to the video file")
-    parser.add_argument(
-        "--model_path", 
-        default="jointcam_model.pt",
-        help="Path to the model checkpoint (default: jointcam_model.pt)"
-    )
-    parser.add_argument(
-        "--device",
-        default="cpu",
-        choices=["cpu", "cuda"],
-        help="Device to use for inference (default: cpu)"
-    )
+    parser = argparse.ArgumentParser(description='Video Emotion Detection using JointCAM')
+    parser.add_argument('video_path', type=str, help='Path to video file')
+    parser.add_argument('--model_path', type=str, default='models/jointcam_finetuned_v4.pt',
+                        help='Path to pre-trained model')
+    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+                        help='Device to run inference on')
     
     args = parser.parse_args()
     
-    # Validate inputs
-    video_path = Path(args.video_path)
-    if not video_path.exists():
-        print(f"Error: Video file not found: {video_path}")
-        sys.exit(1)
-    
-    model_path = Path(args.model_path)
-    if not model_path.exists():
-        print(f"Error: Model file not found: {model_path}")
-        sys.exit(1)
-    
-    print("=" * 60)
-    print("JointCAM Video Emotion Detection")
-    print("=" * 60)
-    print()
-    
-    # Check for ground truth
-    gt_emotion, dataset_type = get_ground_truth(video_path)
-    if gt_emotion:
-        print(f"Detected {dataset_type} format")
-        print(f"Ground truth emotion: {gt_emotion}")
-        print()
-    
+    if not os.path.exists(args.video_path):
+        print(f"Error: Video file not found: {args.video_path}")
+        return
+        
+    if not os.path.exists(args.model_path):
+        print(f"Error: Model file not found: {args.model_path}")
+        return
+
     # Load model
-    model = load_model(model_path, args.device)
-    print()
+    device = args.device
+    print(f"Using device: {device}")
+    model = load_model(args.model_path, device)
     
-    # Extract features
-    print("Extracting features...")
-    video_features, fps = extract_video_features(video_path, args.device)
-    audio_features = extract_audio_features(video_path)
-    print()
+    # Feature extraction
+    video_features, fps = extract_video_features(args.video_path, device)
+    audio_features = extract_audio_features(args.video_path)
     
-    # Align features
-    print("Aligning features...")
+    # Alignment
     video_aligned, audio_aligned = align_features(video_features, audio_features)
-    print(f"  Aligned to {len(video_aligned)} frames")
-    print()
     
-    # Run inference
-    print("Running inference...")
-    valence, arousal = predict_emotions(model, video_aligned, audio_aligned, args.device)
-    print()
+    # Inference
+    valence, arousal = predict_emotions(model, video_aligned, audio_aligned, device)
     
-    # Compute statistics
-    mean_valence = np.mean(valence)
-    mean_arousal = np.mean(arousal)
-    std_valence = np.std(valence)
-    std_arousal = np.std(arousal)
+    # Result interpretation (overall)
+    mean_v = np.mean(valence)
+    mean_a = np.mean(arousal)
+    emotion, desc = interpret_emotions(mean_v, mean_a)
     
-    # Interpret emotion
-    emotion, description = interpret_emotions(mean_valence, mean_arousal)
-    
-    # Print results
-    print("=" * 60)
-    print("RESULTS")
-    print("=" * 60)
-    print()
-    print(f"Video: {video_path.name}")
-    print()
-    print("Predictions (averaged over all frames):")
-    print(f"  Valence: {mean_valence:+.4f} (std: {std_valence:.4f})")
-    print(f"  Arousal: {mean_arousal:+.4f} (std: {std_arousal:.4f})")
-    print()
-    print(f"Interpreted Emotion: {emotion}")
-    print(f"  {description}")
-    print()
-    
-    if gt_emotion:
-        print(f"Ground Truth: {gt_emotion}")
-    
-    print("=" * 60)
-    
-    return {
-        'valence': mean_valence,
-        'arousal': mean_arousal,
-        'valence_std': std_valence,
-        'arousal_std': std_arousal,
-        'emotion': emotion,
-        'ground_truth': gt_emotion
-    }
+    print("\n" + "="*50)
+    print(f"ANALYSIS COMPLETE")
+    print("="*50)
+    print(f"  Overall Valence: {mean_v:+.4f}")
+    print(f"  Overall Arousal: {mean_a:+.4f}")
+    print(f"  Detected Emotion: {emotion}")
+    print(f"  Description: {desc}")
+    print("="*50)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

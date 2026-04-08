@@ -124,28 +124,57 @@ def load_calibration(calibration_path: str) -> Optional[Dict]:
         with open(calibration_path, 'r') as f:
             calibration = json.load(f)
         
-        # Validate structure (MAD/IQR are optional for backward compatibility)
+        # Validate structure (be resilient to missing stats)
         required_keys = ['valence', 'arousal']
-        required_stats = ['min', 'max', 'mean', 'std', 'median', 'p10', 'p25', 'p30', 'p50', 'p70', 'p75', 'p90']
-        optional_stats = ['mad', 'iqr']  # Optional but recommended
+        
+        # Absolute minimum needed for basic operation
+        essential_stats = ['mean', 'median']
         
         for key in required_keys:
             if key not in calibration:
-                print(f"Warning: Missing '{key}' in calibration file. Using fallback thresholds.")
+                print(f"Warning: Missing '{key}' in calibration. Using fallback thresholds.")
                 return None
-            for stat in required_stats:
+            
+            # Ensure essential stats exist
+            for stat in essential_stats:
                 if stat not in calibration[key]:
-                    print(f"Warning: Missing '{stat}' for '{key}' in calibration file. Using fallback thresholds.")
+                    print(f"Warning: Missing essential '{stat}' for '{key}'. Using fallbacks.")
                     return None
-            # Compute MAD/IQR if missing (for backward compatibility)
-            if 'mad' not in calibration[key] or 'iqr' not in calibration[key]:
-                arr = np.array([calibration[key]['mean']])  # Fallback: use mean as single value
-                if 'mad' not in calibration[key]:
-                    calibration[key]['mad'] = float(mad(arr))
-                if 'iqr' not in calibration[key]:
-                    calibration[key]['iqr'] = float(iqr(arr))
+            
+            # --- Smart Fill: Estimate missing stats from existing data ---
+            
+            # 1. Standard Deviation (std)
+            if 'std' not in calibration[key]:
+                # If we have percentiles, estimate std (Normal dist approx: p70-p30 is ~1.05 std)
+                if 'p70' in calibration[key] and 'p30' in calibration[key]:
+                    est_std = (calibration[key]['p70'] - calibration[key]['p30']) / 1.05
+                    calibration[key]['std'] = max(0.01, float(est_std))
+                else:
+                    calibration[key]['std'] = 0.15 # Safe generic default
+                print(f"  Note: Missing 'std' for '{key}' — estimated as {calibration[key]['std']:.4f}")
+
+            # 2. Min/Max
+            if 'min' not in calibration[key]: calibration[key]['min'] = -1.0
+            if 'max' not in calibration[key]: calibration[key]['max'] = 1.0
+            
+            # 3. Percentiles (needed for the state labels)
+            # Default spread if missing
+            defaults = {
+                'p10': -0.4, 'p25': -0.2, 'p30': -0.15, 'p50': 0.0, 
+                'p70': 0.15, 'p75': 0.2, 'p90': 0.4
+            }
+            for p_key, p_val in defaults.items():
+                if p_key not in calibration[key]:
+                    # Shift default relative to the mean
+                    calibration[key][p_key] = calibration[key]['mean'] + p_val
+
+            # 4. MAD/IQR (Robust stats)
+            if 'mad' not in calibration[key]:
+                calibration[key]['mad'] = calibration[key]['std'] * 0.6745
+            if 'iqr' not in calibration[key]:
+                calibration[key]['iqr'] = calibration[key]['std'] * 1.349
         
-        print(f"Calibration loaded successfully from: {calibration_path}")
+        print(f"Calibration loaded successfully (with recovery) from: {calibration_path}")
         return calibration
         
     except json.JSONDecodeError as e:
@@ -705,7 +734,9 @@ def compute_state_label(valence_mean: float,
     elif v_cat == 'neutral-valence':
         state_label = a_cat  # e.g., 'high-arousal' or 'low-arousal'
     elif a_cat == 'neutral-arousal':
-        state_label = v_cat  # e.g., 'negative' or 'positive'
+        # To match the mapper's expected 8-state model, 
+        # append 'low-arousal' to significant valence
+        state_label = f"{v_cat}-low-arousal"
     else:
         state_label = f"{v_cat}-{a_cat}"  # e.g., 'negative-high-arousal'
     

@@ -1,12 +1,15 @@
 # run_batch_videos.py - pipeline only, no PyBullet
 import os, sys, json
 from pathlib import Path
+# Resolve project root dynamically
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent.parent
 DATA = HERE / 'data'
 CAL = DATA / 'calibration.json'
-ER = r'C:\\Users\\vanoh\\OneDrive\\Desktop\\ChaiCenter_SpotBasics\\chaicenter-spot-basics\\emotion-poc'
-sys.path.insert(0, ER)
-sys.path.insert(0, str(HERE.parent.parent))
+
+# Add project root to path for imports
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 os.chdir(str(HERE))
 with open(CAL) as f:
     cal = json.load(f)
