@@ -156,7 +156,7 @@ class StreamingSession:
         capture_audio:        bool  = True,
         sample_rate:          int   = 16000,
         min_confidence:       float = 0.55,
-        cooldown_s:           float = 1.5,
+        cooldown_s:           float = 0.5,
         debug:                bool  = False,
         cleanup_temp:         bool  = True,
         temp_dir: Optional[str]     = None,

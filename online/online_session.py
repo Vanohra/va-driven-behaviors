@@ -43,7 +43,7 @@ class ReactionHistory:
     def __init__(
         self,
         min_confidence: float = 0.55,
-        cooldown_s: float = 8.0,
+        cooldown_s: float = 0.5,
         fallback_intent: str = "NEUTRAL",
     ):
         self.min_confidence = min_confidence

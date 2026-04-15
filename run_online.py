@@ -34,6 +34,16 @@ from pipeline import load_calibration
 from online.window_analyzer    import WindowAnalyzer
 from online.streaming_session  import StreamingSession
 
+# ── Optional robot adapter (imported lazily so missing pyserial doesn't crash) ─
+def _load_bittle_adapter(port: str, mock: bool):
+    """Return a BittleXAdapter, or None if the import fails unexpectedly."""
+    try:
+        from robot.bittle_adapter import BittleXAdapter
+        return BittleXAdapter(port=port, mock=mock)
+    except Exception as exc:
+        print(f"[BITTLE] Could not initialise adapter: {exc}")
+        return None
+
 try:
     from test_emotions import load_model
 except ImportError as e:
@@ -62,8 +72,8 @@ def parse_args() -> argparse.Namespace:
                    help="Analysis window size in seconds  (default: 3)")
     p.add_argument("--min-confidence", type=float, default=0.55, metavar="C",
                    help="Minimum state_confidence to accept a new intent  (default: 0.55)")
-    p.add_argument("--cooldown", type=float, default=1.5, metavar="S",
-                   help="Min seconds between behavior changes  (default: 1.5)")
+    p.add_argument("--cooldown", type=float, default=0.5, metavar="S",
+                   help="Min seconds between behavior changes  (default: 0.5)")
     p.add_argument("--model",    default=None, metavar="PATH",
                    help="Path to .pt model file  (default: models/jointcam_finetuned_v4.pt)")
     p.add_argument("--device",   default="cpu", choices=["cpu", "cuda"],
@@ -72,6 +82,17 @@ def parse_args() -> argparse.Namespace:
                    help="Keep temp video/audio files after the session")
     p.add_argument("--sparse", action="store_true",
                    help="Sparse sampling mode: process only 2 frames per window (CPU-efficient)")
+    # ── Bittle hardware ───────────────────────────────────────────────────────
+    p.add_argument(
+        "--robot-port", default=None, metavar="PORT",
+        help="Serial port for Petoi Bittle X  (e.g. COM7, /dev/ttyUSB0). "
+             "Omit to run without hardware."
+    )
+    p.add_argument(
+        "--mock-robot", action="store_true",
+        help="Enable mock robot mode: prints commands instead of sending to hardware. "
+             "Useful for testing the integration without the physical robot connected."
+    )
     return p.parse_args()
 
 
@@ -135,9 +156,27 @@ def main() -> None:
         debug=args.debug,
     )
 
+    # ── Optional Bittle hardware setup ────────────────────────────────────────
+    robot = None
+    on_behavior_update = None
+    if args.robot_port or args.mock_robot:
+        port  = args.robot_port or "COM7"
+        robot = _load_bittle_adapter(port=port, mock=args.mock_robot)
+        if robot is not None:
+            mode = "mock" if robot.mock else f"hardware on {port}"
+            print(f"  Robot:    Petoi Bittle X ({mode})")
+            # StreamingSession calls on_behavior_update(intent, reaction_action, analysis)
+            # immediately after each stability-gated decision, before detailed printing.
+            # intent is already the effective (stability-gated) intent; override ra.intent
+            # so the robot respects the gate rather than acting on the raw model output.
+            def on_behavior_update(intent, ra, analysis):
+                if ra is not None:
+                    ra.intent = intent  # respect stability gate — not raw model intent
+                    robot.apply_reaction(ra)
+
     # ── Run streaming session ─────────────────────────────────────────────────
     num_samples = 2 if args.sparse else None
-    
+
     try:
         session = StreamingSession(
             window_analyzer=analyzer,
@@ -152,6 +191,7 @@ def main() -> None:
             debug=args.debug,
             cleanup_temp=not args.no_cleanup,
             num_samples=num_samples,
+            on_behavior_update=on_behavior_update,
         )
         session.run()
 
@@ -162,6 +202,9 @@ def main() -> None:
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        if robot is not None:
+            robot.disconnect()
 
     print("  Done.")
 
