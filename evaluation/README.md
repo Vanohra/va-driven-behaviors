@@ -54,7 +54,7 @@ Expected: `video29_results.csv`, `video30_results.csv`, …, `video34_results.cs
 ```bash
 python evaluation/eval_1_cooldown/run_eval.py
 python evaluation/eval_2_confidence_gating/run_eval.py
-python evaluation/eval_3_va_preprocessing/run_eval.py          # slow; use --sample 1 to smoke-test
+python evaluation/eval_3_va_preprocessing/run_eval.py --sample 5      # slow; use --sample 1 to smoke-test
 python evaluation/eval_4_adapter_cooldown/run_eval.py
 ```
 

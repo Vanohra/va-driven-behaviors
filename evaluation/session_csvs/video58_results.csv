@@ -1,0 +1,4 @@
+window_index,t_start,t_end,proposed_intent,effective_intent,did_change,change_reason,pose_mode,state_label,state_confidence,valence,arousal,valence_trend,arousal_trend,valence_volatility,arousal_volatility,analysis_time_s,video
+0,0.0,3.0,CHECK_IN,CHECK_IN,True,first,REACTION_POSE,positive-low-arousal,0.5,0.547085929799963,0.11474613201471022,mixed,mixed,0.01275634765625,0.002356581389904022,13.07904839515686,video58
+1,3.0,6.0,CHECK_IN,NEUTRAL,False,low_confidence,REACTION_POSE,positive-low-arousal,0.5,0.512499236398273,0.1155623584801768,mixed,mixed,0.007656514644622803,0.0040662288665771484,12.225466012954712,video58
+2,6.0,9.0,CHECK_IN,NEUTRAL,False,low_confidence,REACTION_POSE,positive-low-arousal,0.5,0.49913500451747284,0.11776426940420527,mixed,mixed,0.0021992921829223633,0.0018893331289291382,11.944109201431274,video58
