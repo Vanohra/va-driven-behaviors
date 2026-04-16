@@ -36,6 +36,7 @@ Usage:
 
 import sys
 import os
+import csv
 import argparse
 import tempfile
 import shutil
@@ -308,6 +309,72 @@ def _print_summary(
     print()
 
 
+# ── CSV logging helper ────────────────────────────────────────────────────────
+
+def _save_session_csv(results: List[Dict], video_path: Path, window_dur: float) -> None:
+    """
+    Persist per-window results to evaluation/session_csvs/<stem>_results.csv.
+
+    Uses only Python's built-in csv module (no pandas).
+    Overwrites any existing file for the same video.
+    Called from main() in a try/finally so partial results are saved on
+    interruption.
+    """
+    out_dir = Path(__file__).parent / "evaluation" / "session_csvs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{video_path.stem}_results.csv"
+
+    fieldnames = [
+        "window_index", "t_start", "t_end",
+        "proposed_intent", "effective_intent", "did_change", "change_reason",
+        "pose_mode", "state_label", "state_confidence",
+        "valence", "arousal",
+        "valence_trend", "arousal_trend",
+        "valence_volatility", "arousal_volatility",
+        "analysis_time_s", "video",
+    ]
+
+    rows = []
+    for r in results:
+        analysis = r.get("analysis")
+        ra = analysis.get("reaction_action") if analysis else None
+
+        if analysis is None:
+            proposed_intent = "UNKNOWN"
+        elif ra is not None:
+            proposed_intent = ra.intent
+        else:
+            proposed_intent = "NEUTRAL"
+
+        rows.append({
+            "window_index":       r["window_idx"],
+            "t_start":            r["window_start_s"],
+            "t_end":              r["window_start_s"] + window_dur,
+            "proposed_intent":    proposed_intent,
+            "effective_intent":   r["effective_intent"],
+            "did_change":         r["did_change"],
+            "change_reason":      r["reason"],
+            "pose_mode":          ra.pose_mode if ra is not None else "N/A",
+            "state_label":        analysis.get("va_state_label", "unknown") if analysis else "unknown",
+            "state_confidence":   analysis.get("state_confidence", 0.0) if analysis else 0.0,
+            "valence":            analysis.get("valence", 0.0) if analysis else 0.0,
+            "arousal":            analysis.get("arousal", 0.0) if analysis else 0.0,
+            "valence_trend":      analysis.get("valence_direction", "unknown") if analysis else "unknown",
+            "arousal_trend":      analysis.get("arousal_direction", "unknown") if analysis else "unknown",
+            "valence_volatility": analysis.get("valence_volatility", 0.0) if analysis else 0.0,
+            "arousal_volatility": analysis.get("arousal_volatility", 0.0) if analysis else 0.0,
+            "analysis_time_s":    r["analysis_elapsed_s"],
+            "video":              video_path.stem,
+        })
+
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"[EVAL] Results saved to evaluation/session_csvs/{video_path.stem}_results.csv")
+
+
 # ── Core windowed session (mirrors StreamingSession, reads from file) ─────────
 
 def run_offline_session(
@@ -510,8 +577,9 @@ def main() -> None:
             mode = "mock" if robot.mock else f"hardware on {port}"
             print(f"  Robot:       Petoi Bittle X ({mode})")
 
+    session_results: List[Dict] = []
     try:
-        run_offline_session(
+        session_results = run_offline_session(
             video_path=video_path,
             analyzer=analyzer,
             window_dur=args.window,
@@ -525,6 +593,8 @@ def main() -> None:
     finally:
         if robot is not None:
             robot.disconnect()
+        if session_results:
+            _save_session_csv(session_results, video_path, args.window)
 
 
 if __name__ == "__main__":

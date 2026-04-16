@@ -1,0 +1,5 @@
+video,condition,timing_mode,n_commands_sent,n_commands_dropped,command_rate,dedup_drop_rate,cooldown_drop_rate,n_windows
+video29,no_cooldown,online_mode,1,1,10.0,0.5,0.0,2
+video29,no_cooldown,offline_mode,1,1,60.0,0.5,0.0,2
+video29,with_cooldown,online_mode,1,1,10.0,0.5,0.0,2
+video29,with_cooldown,offline_mode,1,1,60.0,0.5,0.0,2
